@@ -49,7 +49,6 @@ class Commande:
 
     @staticmethod
     def mettre_a_jour(cmd_id, nouveau_num, nouvelle_date):
-        from modele.database import get_connection
         conn = get_connection()
         cur = conn.cursor()
         cur.execute(
