@@ -35,7 +35,8 @@ def init_db():
             produit TEXT NOT NULL,
             qte_cmd INTEGER NOT NULL DEFAULT 0 CHECK(qte_cmd >= 0),
             PRIMARY KEY(fact_id, produit),
-            FOREIGN KEY(fact_id) REFERENCES factures(id) ON DELETE CASCADE
+            FOREIGN KEY(fact_id) REFERENCES factures(id) ON DELETE CASCADE,
+            FOREIGN KEY(produit) REFERENCES produits(nom) ON DELETE RESTRICT
         )
     """)
     c.execute("""
@@ -53,11 +54,12 @@ def init_db():
             produit TEXT NOT NULL,
             qte_livree INTEGER NOT NULL DEFAULT 0 CHECK(qte_livree >= 0),
             PRIMARY KEY(bl_id, produit),
-            FOREIGN KEY(bl_id) REFERENCES bls(id) ON DELETE CASCADE
+            FOREIGN KEY(bl_id) REFERENCES bls(id) ON DELETE CASCADE,
+            FOREIGN KEY(produit) REFERENCES produits(nom) ON DELETE RESTRICT
         )
     """)
     c.execute("""
-        CREATE TABLE IF NOT EXISTS solde_items (
+        CREATE TABLE IF NOT EXISTS soldes_dus (
             cmd_id INTEGER NOT NULL,
             produit TEXT NOT NULL,
             solde INTEGER NOT NULL,
@@ -75,7 +77,7 @@ def init_db():
     CREATE TRIGGER IF NOT EXISTS trg_init_or_update_solde_after_facture
     AFTER INSERT ON facture_items
     BEGIN
-      INSERT OR REPLACE INTO solde_items(cmd_id, produit, solde)
+      INSERT OR REPLACE INTO soldes_dus(cmd_id, produit, solde)
       VALUES(
         (SELECT cmd_id FROM factures WHERE id = NEW.fact_id),
         NEW.produit,
@@ -93,7 +95,7 @@ def init_db():
     CREATE TRIGGER IF NOT EXISTS trg_update_solde_after_facture_update
     AFTER UPDATE ON facture_items
     BEGIN
-      UPDATE solde_items
+      UPDATE soldes_dus
       SET solde = NEW.qte_cmd - COALESCE(
         (SELECT SUM(bi.qte_livree)
          FROM bl_items bi
@@ -109,7 +111,7 @@ def init_db():
     CREATE TRIGGER IF NOT EXISTS trg_update_solde_after_bl_ins
     AFTER INSERT ON bl_items
     BEGIN
-      UPDATE solde_items
+      UPDATE soldes_dus
       SET solde = solde - NEW.qte_livree
       WHERE cmd_id = (SELECT cmd_id FROM bls WHERE id = NEW.bl_id)
         AND produit = NEW.produit;
@@ -118,7 +120,7 @@ def init_db():
     CREATE TRIGGER IF NOT EXISTS trg_update_solde_after_bl_upd
     AFTER UPDATE ON bl_items
     BEGIN
-      UPDATE solde_items
+      UPDATE soldes_dus
       SET solde = solde + OLD.qte_livree - NEW.qte_livree
       WHERE cmd_id = (SELECT cmd_id FROM bls WHERE id = NEW.bl_id)
         AND produit = NEW.produit;
@@ -127,7 +129,7 @@ def init_db():
     CREATE TRIGGER IF NOT EXISTS trg_update_solde_after_bl_delete
     AFTER DELETE ON bl_items
     BEGIN
-      UPDATE solde_items
+      UPDATE soldes_dus
       SET solde =
         COALESCE(
           (SELECT qte_cmd FROM facture_items
@@ -150,7 +152,7 @@ def init_db():
     CREATE TRIGGER IF NOT EXISTS trg_delete_solde_if_no_factureitem
     AFTER DELETE ON facture_items
     BEGIN
-      DELETE FROM solde_items
+      DELETE FROM soldes_dus
       WHERE cmd_id = (SELECT cmd_id FROM factures WHERE id = OLD.fact_id)
         AND produit = OLD.produit
         AND NOT EXISTS (SELECT 1 FROM facture_items WHERE fact_id = OLD.fact_id AND produit = OLD.produit);
@@ -159,7 +161,7 @@ def init_db():
     CREATE TRIGGER IF NOT EXISTS trg_update_solde_after_facture_delete
     AFTER DELETE ON facture_items
     BEGIN
-      UPDATE solde_items
+      UPDATE soldes_dus
       SET solde = 
         COALESCE(
           (SELECT qte_cmd FROM facture_items
@@ -178,13 +180,13 @@ def init_db():
     END;
 
     CREATE TRIGGER IF NOT EXISTS trg_sync_commande_status
-    AFTER INSERT ON solde_items
+    AFTER INSERT ON soldes_dus
     BEGIN
       UPDATE commandes
       SET status =
         CASE
           WHEN NOT EXISTS (
-            SELECT 1 FROM solde_items si
+            SELECT 1 FROM soldes_dus si
             WHERE si.cmd_id = NEW.cmd_id
               AND si.solde != 0
           ) THEN 'Livrée'
@@ -194,13 +196,13 @@ def init_db():
     END;
 
     CREATE TRIGGER IF NOT EXISTS trg_sync_commande_status_update
-    AFTER UPDATE ON solde_items
+    AFTER UPDATE ON soldes_dus
     BEGIN
       UPDATE commandes
       SET status =
         CASE
           WHEN NOT EXISTS (
-            SELECT 1 FROM solde_items si
+            SELECT 1 FROM soldes_dus si
             WHERE si.cmd_id = NEW.cmd_id
               AND si.solde != 0
           ) THEN 'Livrée'
@@ -210,13 +212,13 @@ def init_db():
     END;
 
     CREATE TRIGGER IF NOT EXISTS trg_sync_commande_status_delete
-    AFTER DELETE ON solde_items
+    AFTER DELETE ON soldes_dus
     BEGIN
       UPDATE commandes
       SET status =
         CASE
           WHEN NOT EXISTS (
-            SELECT 1 FROM solde_items si
+            SELECT 1 FROM soldes_dus si
             WHERE si.cmd_id = OLD.cmd_id
               AND si.solde != 0
           ) THEN 'Livrée'
